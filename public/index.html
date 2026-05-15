@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>QuickTiming</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: rgba(0,0,0,0); }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #f3f4f6;
+    color: #111;
+    -webkit-text-size-adjust: 100%;
+  }
+  header {
+    background: #1f2937;
+    color: white;
+    padding: 10px 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: sticky;
+    top: 0;
+    z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 18px; }
+  .conn-dot {
+    display: inline-block;
+    width: 10px; height: 10px;
+    border-radius: 50%;
+    background: #ef4444;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .conn-dot.connected { background: #10b981; }
+  nav {
+    display: flex;
+    background: #374151;
+    overflow-x: auto;
+    position: sticky;
+    top: 44px;
+    z-index: 9;
+  }
+  nav button {
+    flex: 1;
+    min-width: 80px;
+    padding: 12px 6px;
+    background: none;
+    border: none;
+    color: #d1d5db;
+    font-size: 14px;
+    cursor: pointer;
+    border-bottom: 3px solid transparent;
+    white-space: nowrap;
+  }
+  nav button.active {
+    color: white;
+    border-bottom-color: #10b981;
+    background: #1f2937;
+  }
+  main { padding: 12px; max-width: 1000px; margin: 0 auto; }
+  .view { display: none; }
+  .view.active { display: block; }
+  h2 { margin-top: 0; }
+  .card {
+    background: white;
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+  }
+  input, select, button {
+    font-size: 16px;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid #d1d5db;
+    font-family: inherit;
+  }
+  input, select { width: 100%; }
+  input:focus, select:focus { outline: 2px solid #10b981; outline-offset: -1px; }
+  button { cursor: pointer; }
+  .btn-primary { background: #10b981; color: white; border: none; font-weight: 600; }
+  .btn-primary:hover { background: #059669; }
+  .btn-primary:active { background: #047857; }
+  .btn-danger { background: #ef4444; color: white; border: none; }
+  .btn-danger:hover { background: #dc2626; }
+  .btn-secondary { background: #e5e7eb; color: #111; border: none; }
+  .btn-secondary:hover { background: #d1d5db; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 10px 8px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+  th { background: #f9fafb; font-weight: 600; font-size: 14px; }
+  .form-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
+  .form-row > * { flex: 1; min-width: 100px; }
+  .form-row .btn-primary { flex: 0 0 auto; min-width: 110px; }
+  .timer-display {
+    font-size: 84px;
+    font-family: "Courier New", monospace;
+    text-align: center;
+    font-weight: bold;
+    color: #111;
+    padding: 16px;
+    background: #f9fafb;
+    border-radius: 8px;
+    margin-bottom: 12px;
+    line-height: 1;
+  }
+  .timer-display.running { color: #10b981; }
+  .bib-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+    gap: 8px;
+  }
+  .bib-btn {
+    padding: 22px 6px;
+    background: #3b82f6;
+    color: white;
+    border: none;
+    border-radius: 10px;
+    font-size: 22px;
+    font-weight: bold;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.05s;
+  }
+  .bib-btn:active { transform: scale(0.96); background: #1d4ed8; }
+  .bib-btn.finished {
+    background: #6b7280;
+    cursor: default;
+  }
+  .bib-btn .name {
+    display: block;
+    font-size: 11px;
+    font-weight: normal;
+    margin-top: 4px;
+    opacity: 0.9;
+  }
+  .bib-btn .time {
+    display: block;
+    font-size: 14px;
+    margin-top: 4px;
+    font-family: "Courier New", monospace;
+  }
+  .lineup-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .lineup-tag {
+    background: #dbeafe;
+    color: #1e40af;
+    padding: 6px 10px;
+    border-radius: 16px;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .lineup-tag button {
+    background: none;
+    border: none;
+    color: #1e40af;
+    cursor: pointer;
+    padding: 0;
+    font-weight: bold;
+    font-size: 18px;
+    line-height: 1;
+  }
+  .results-row { display: flex; gap: 8px; align-items: center; margin-bottom: 6px; }
+  .place {
+    font-weight: bold;
+    background: #fef3c7;
+    color: #92400e;
+    padding: 4px 8px;
+    border-radius: 4px;
+    min-width: 30px;
+    text-align: center;
+    font-size: 14px;
+  }
+  .place.gold { background: #fde047; }
+  .place.silver { background: #e5e7eb; }
+  .place.bronze { background: #fdba74; }
+  .empty {
+    text-align: center;
+    color: #6b7280;
+    padding: 20px;
+    font-style: italic;
+  }
+  .attempts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+  .attempt-chip {
+    background: #f3f4f6;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-family: "Courier New", monospace;
+    font-size: 14px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .attempt-chip.best { background: #d1fae5; color: #065f46; font-weight: bold; }
+  .small { font-size: 13px; color: #6b7280; }
+  .danger-link {
+    background: none;
+    border: none;
+    color: #ef4444;
+    cursor: pointer;
+    font-size: 14px;
+    padding: 4px 8px;
+  }
+  .row-spread { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .btn-row button { flex: 1; min-width: 120px; }
+  @media (max-width: 480px) {
+    .timer-display { font-size: 60px; }
+    .bib-btn { padding: 18px 4px; font-size: 20px; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>QuickTiming</h1>
+  <span><span class="conn-dot" id="conn-dot"></span><span id="conn-text" style="font-size:13px">connecting…</span></span>
+</header>
+
+<nav>
+  <button data-view="bibs" class="active">Bibs</button>
+  <button data-view="r100">100m</button>
+  <button data-view="r400">400m</button>
+  <button data-view="lj">Long Jump</button>
+  <button data-view="results">Results</button>
+</nav>
+
+<main>
+
+  <section id="view-bibs" class="view active">
+    <h2>Bib Assignments</h2>
+    <div class="card">
+      <div class="form-row">
+        <input id="bib-number" type="number" inputmode="numeric" placeholder="Bib #" min="1">
+        <input id="bib-name" type="text" placeholder="Athlete name">
+        <button class="btn-primary" onclick="addBib()">Assign</button>
+      </div>
+      <p class="small">Anyone can assign bibs. All phones see updates instantly.</p>
+    </div>
+    <div class="card">
+      <table id="bib-table">
+        <thead><tr><th style="width:70px">Bib</th><th>Name</th><th style="width:70px"></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="view-r100" class="view">
+    <h2>100 Meter Dash</h2>
+    <div id="r100-content"></div>
+  </section>
+
+  <section id="view-r400" class="view">
+    <h2>400 Meter Dash</h2>
+    <div id="r400-content"></div>
+  </section>
+
+  <section id="view-lj" class="view">
+    <h2>Long Jump</h2>
+    <div class="card">
+      <div class="form-row">
+        <input id="lj-bib" type="number" inputmode="numeric" placeholder="Bib #" min="1">
+        <input id="lj-feet" type="number" inputmode="numeric" placeholder="Feet" min="0">
+        <input id="lj-inches" type="number" inputmode="decimal" placeholder="Inches" min="0" max="11.99" step="0.25">
+        <button class="btn-primary" onclick="recordJump()">Record Jump</button>
+      </div>
+      <p class="small">Type the bib number, feet, and inches, then record. The bib doesn't need a name assigned yet.</p>
+    </div>
+    <div class="card">
+      <h3>Jumpers</h3>
+      <div id="lj-list"></div>
+    </div>
+  </section>
+
+  <section id="view-results" class="view">
+    <h2>Results</h2>
+    <div class="card">
+      <div class="btn-row">
+        <a href="/export.html" target="_blank" class="btn-primary" style="text-decoration:none; text-align:center; padding:10px 12px; border-radius:6px">View Results Page</a>
+        <a href="/export/download" class="btn-secondary" style="text-decoration:none; text-align:center; padding:10px 12px; border-radius:6px; color:#111">Download HTML</a>
+      </div>
+      <p class="small" style="margin-top:8px">Open or share the results page link — it always reflects the latest data.</p>
+    </div>
+    <div class="card"><h3>100 Meter Dash</h3><div id="results-100"></div></div>
+    <div class="card"><h3>400 Meter Dash</h3><div id="results-400"></div></div>
+    <div class="card"><h3>Long Jump</h3><div id="results-lj"></div></div>
+    <div class="card">
+      <button class="btn-danger" onclick="resetAll()">Reset All Data</button>
+    </div>
+  </section>
+
+</main>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+// =============== STATE ===============
+let state = {
+  bibs: {},
+  races: {
+    r100: { lineup: [], startTime: null, results: [] },
+    r400: { lineup: [], startTime: null, results: [] }
+  },
+  longJump: {}
+};
+let clockOffset = 0; // serverNow - clientNow at last broadcast
+
+const socket = io({ transports: ["websocket", "polling"] });
+
+socket.on("connect", () => {
+  document.getElementById("conn-dot").classList.add("connected");
+  document.getElementById("conn-text").textContent = "live";
+});
+socket.on("disconnect", () => {
+  document.getElementById("conn-dot").classList.remove("connected");
+  document.getElementById("conn-text").textContent = "offline";
+});
+socket.on("state", ({ state: s, serverNow }) => {
+  clockOffset = serverNow - Date.now();
+  state = s;
+  renderAll();
+  ensureTimerLoop();
+});
+
+// =============== NAV ===============
+document.querySelectorAll("nav button").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll("nav button").forEach(b => b.classList.remove("active"));
+    document.querySelectorAll(".view").forEach(v => v.classList.remove("active"));
+    btn.classList.add("active");
+    document.getElementById("view-" + btn.dataset.view).classList.add("active");
+    renderAll();
+  });
+});
+
+// =============== HELPERS ===============
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+}
+function formatMs(ms) {
+  if (ms == null) return "—";
+  const totalSec = ms / 1000;
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec - min * 60;
+  if (min > 0) return `${min}:${sec.toFixed(2).padStart(5,"0")}`;
+  return sec.toFixed(2);
+}
+function formatDist(j) { return `${j.feet}' ${j.inches}"`; }
+function serverTime() { return Date.now() + clockOffset; }
+
+// =============== BIBS ===============
+function addBib() {
+  const numEl = document.getElementById("bib-number");
+  const nameEl = document.getElementById("bib-name");
+  const num = numEl.value.trim();
+  const name = nameEl.value.trim();
+  if (!num || !name) { alert("Enter both a bib number and a name."); return; }
+  if (state.bibs[num] && !confirm(`Bib ${num} is "${state.bibs[num]}". Overwrite?`)) return;
+  socket.emit("bib:set", { num, name });
+  numEl.value = "";
+  nameEl.value = "";
+  numEl.focus();
+}
+function removeBib(num) {
+  if (!confirm(`Remove bib ${num} (${state.bibs[num]})?`)) return;
+  socket.emit("bib:remove", { num });
+}
+function renderBibs() {
+  const tbody = document.querySelector("#bib-table tbody");
+  const entries = Object.entries(state.bibs).sort((a,b) => Number(a[0]) - Number(b[0]));
+  if (entries.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="3" class="empty">No bibs assigned yet.</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = entries.map(([num, name]) => `
+    <tr>
+      <td><strong>${num}</strong></td>
+      <td>${escapeHtml(name)}</td>
+      <td><button class="danger-link" onclick="removeBib('${num}')">Remove</button></td>
+    </tr>`).join("");
+}
+
+// =============== RACES ===============
+function renderRace(key, containerId) {
+  const race = state.races[key];
+  const c = document.getElementById(containerId);
+  const isRunning = race.startTime !== null;
+  const finishedBibs = new Set(race.results.map(r => r.bib));
+
+  let html = "";
+
+  // Lineup / start panel
+  if (!isRunning) {
+    html += `<div class="card">
+      <h3>Starting Line-Up</h3>
+      <div class="form-row">
+        <input id="${key}-bib-input" type="number" inputmode="numeric" placeholder="Bib #" min="1"
+               onkeydown="if(event.key==='Enter') addToLineup('${key}')">
+        <button class="btn-primary" onclick="addToLineup('${key}')">Add</button>
+      </div>
+      <div class="lineup-list">`;
+    if (race.lineup.length === 0) {
+      html += `<span class="small">No athletes added yet.</span>`;
+    } else {
+      race.lineup.forEach(bib => {
+        const name = state.bibs[bib];
+        const label = name ? `${bib} — ${escapeHtml(name)}` : bib;
+        html += `<span class="lineup-tag">${label} <button onclick="removeFromLineup('${key}','${bib}')">×</button></span>`;
+      });
+    }
+    html += `</div>
+      <div class="btn-row">
+        <button class="btn-primary" onclick="startRace('${key}')" ${race.lineup.length === 0 ? "disabled" : ""}>Start Race</button>
+        ${race.results.length > 0 ? `<button class="btn-secondary" onclick="clearRace('${key}')">Clear Results</button>` : ""}
+      </div>
+    </div>`;
+  }
+
+  // Timer + finish line
+  if (isRunning || race.results.length > 0) {
+    html += `<div class="card">
+      <div class="timer-display ${isRunning ? "running" : ""}" id="${key}-timer">${isRunning ? "0.00" : "—"}</div>`;
+
+    if (isRunning) {
+      html += `<div class="btn-row">
+        <button class="btn-danger" onclick="stopRace('${key}')">Stop Timer</button>
+      </div>
+      <h3 style="margin-top:18px">Tap bib at finish</h3>
+      <div class="bib-grid">`;
+      race.lineup.forEach(bib => {
+        const name = state.bibs[bib] || "";
+        if (finishedBibs.has(bib)) {
+          const result = race.results.find(r => r.bib === bib);
+          html += `<button class="bib-btn finished" disabled>
+            ${bib}<span class="name">${escapeHtml(name)}</span>
+            <span class="time">${formatMs(result.ms)}</span>
+          </button>`;
+        } else {
+          html += `<button class="bib-btn" onclick="recordFinish('${key}','${bib}')">
+            ${bib}<span class="name">${escapeHtml(name)}</span>
+          </button>`;
+        }
+      });
+      html += `</div>`;
+    }
+
+    if (race.results.length > 0) {
+      html += `<h3 style="margin-top:18px">Results</h3>`;
+      const sorted = [...race.results].sort((a,b) => a.ms - b.ms);
+      sorted.forEach((r, i) => {
+        const cls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
+        html += `<div class="results-row">
+          <span class="place ${cls}">${i+1}</span>
+          <strong>${r.bib}</strong>
+          <span style="flex:1">${escapeHtml(state.bibs[r.bib] || "")}</span>
+          <span style="font-family:monospace; font-weight:bold">${formatMs(r.ms)}</span>
+        </div>`;
+      });
+    }
+    html += `</div>`;
+  }
+
+  c.innerHTML = html;
+}
+
+function addToLineup(key) {
+  const input = document.getElementById(`${key}-bib-input`);
+  const bib = input.value.trim();
+  if (!bib) return;
+  socket.emit("race:lineup:add", { race: key, bib });
+  input.value = "";
+  input.focus();
+}
+function removeFromLineup(key, bib) {
+  socket.emit("race:lineup:remove", { race: key, bib });
+}
+function startRace(key) {
+  socket.emit("race:start", { race: key });
+}
+function stopRace(key) {
+  if (!confirm("Stop the timer? Recorded finishes are kept.")) return;
+  socket.emit("race:stop", { race: key });
+}
+function clearRace(key) {
+  if (!confirm("Clear all results for this race?")) return;
+  socket.emit("race:clear", { race: key });
+}
+function recordFinish(key, bib) {
+  socket.emit("race:finish", { race: key, bib, clientTime: Date.now() });
+}
+
+// =============== TIMER LOOP ===============
+let timerInterval = null;
+function ensureTimerLoop() {
+  const anyRunning = Object.values(state.races).some(r => r.startTime !== null);
+  if (anyRunning && !timerInterval) {
+    timerInterval = setInterval(updateTimers, 50);
+  } else if (!anyRunning && timerInterval) {
+    clearInterval(timerInterval);
+    timerInterval = null;
+  }
+}
+function updateTimers() {
+  const now = serverTime();
+  ["r100","r400"].forEach(key => {
+    const race = state.races[key];
+    const el = document.getElementById(`${key}-timer`);
+    if (el && race.startTime) {
+      el.textContent = formatMs(now - race.startTime);
+    }
+  });
+}
+
+// =============== LONG JUMP ===============
+function recordJump() {
+  const bibEl = document.getElementById("lj-bib");
+  const feetEl = document.getElementById("lj-feet");
+  const inchesEl = document.getElementById("lj-inches");
+  const bib = bibEl.value.trim();
+  const feet = parseFloat(feetEl.value) || 0;
+  const inches = parseFloat(inchesEl.value) || 0;
+  if (!bib) { alert("Enter a bib number."); return; }
+  if (feet === 0 && inches === 0) { alert("Enter a jump distance."); return; }
+  if (inches >= 12) { alert("Inches must be less than 12."); return; }
+  socket.emit("lj:record", { bib, feet, inches });
+  feetEl.value = "";
+  inchesEl.value = "";
+  bibEl.focus();
+  bibEl.select();
+}
+function removeJump(bib, idx) {
+  if (!confirm("Remove this jump?")) return;
+  socket.emit("lj:remove", { bib, idx });
+}
+function renderLongJump() {
+  const list = document.getElementById("lj-list");
+  const jumpers = Object.entries(state.longJump);
+  if (jumpers.length === 0) {
+    list.innerHTML = `<p class="empty">No jumps recorded yet.</p>`;
+    return;
+  }
+  jumpers.sort((a,b) => {
+    const maxA = Math.max(...a[1].map(j => j.totalInches));
+    const maxB = Math.max(...b[1].map(j => j.totalInches));
+    return maxB - maxA;
+  });
+  list.innerHTML = jumpers.map(([bib, jumps]) => {
+    const bestIdx = jumps.reduce((bi, j, i, arr) => j.totalInches > arr[bi].totalInches ? i : bi, 0);
+    const best = jumps[bestIdx];
+    const labelName = state.bibs[bib];
+    const label = labelName ? `${bib} — ${escapeHtml(labelName)}` : bib;
+    return `<div style="border-bottom:1px solid #e5e7eb; padding:10px 0">
+      <div class="row-spread">
+        <strong>${label}</strong>
+        <span style="font-family:monospace; font-weight:bold; color:#065f46">Best: ${formatDist(best)}</span>
+      </div>
+      <div class="attempts">
+        ${jumps.map((j, i) => `<span class="attempt-chip ${i === bestIdx ? "best" : ""}">
+          ${formatDist(j)}
+          <button class="danger-link" style="padding:0 0 0 4px" onclick="removeJump('${bib}',${i})">×</button>
+        </span>`).join("")}
+      </div>
+    </div>`;
+  }).join("");
+}
+
+// =============== RESULTS ===============
+function renderResults() {
+  ["r100","r400"].forEach(key => {
+    const el = document.getElementById(key === "r100" ? "results-100" : "results-400");
+    const sorted = [...state.races[key].results].sort((a,b) => a.ms - b.ms);
+    if (sorted.length === 0) { el.innerHTML = `<p class="empty">No results yet.</p>`; return; }
+    el.innerHTML = sorted.map((r, i) => {
+      const cls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
+      return `<div class="results-row">
+        <span class="place ${cls}">${i+1}</span>
+        <strong>${r.bib}</strong>
+        <span style="flex:1">${escapeHtml(state.bibs[r.bib] || "")}</span>
+        <span style="font-family:monospace; font-weight:bold">${formatMs(r.ms)}</span>
+      </div>`;
+    }).join("");
+  });
+
+  const ljEl = document.getElementById("results-lj");
+  const jumpers = Object.entries(state.longJump).map(([bib, jumps]) => ({
+    bib, best: jumps.reduce((m, j) => j.totalInches > m.totalInches ? j : m, jumps[0])
+  }));
+  jumpers.sort((a,b) => b.best.totalInches - a.best.totalInches);
+  if (jumpers.length === 0) {
+    ljEl.innerHTML = `<p class="empty">No jumps recorded yet.</p>`;
+  } else {
+    ljEl.innerHTML = jumpers.map((j, i) => {
+      const cls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
+      return `<div class="results-row">
+        <span class="place ${cls}">${i+1}</span>
+        <strong>${j.bib}</strong>
+        <span style="flex:1">${escapeHtml(state.bibs[j.bib] || "")}</span>
+        <span style="font-family:monospace; font-weight:bold">${formatDist(j.best)}</span>
+      </div>`;
+    }).join("");
+  }
+}
+
+function resetAll() {
+  if (!confirm("This will erase ALL bibs and results across all phones. Are you sure?")) return;
+  if (!confirm("Really sure? This cannot be undone.")) return;
+  socket.emit("reset:all");
+}
+
+// =============== RENDER ===============
+function renderAll() {
+  renderBibs();
+  renderRace("r100", "r100-content");
+  renderRace("r400", "r400-content");
+  renderLongJump();
+  renderResults();
+}
+
+document.getElementById("bib-name").addEventListener("keydown", e => {
+  if (e.key === "Enter") addBib();
+});
+document.getElementById("bib-number").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("bib-name").focus();
+});
+
+renderAll();
+</script>
+</body>
+</html>
