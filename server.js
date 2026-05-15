@@ -15,13 +15,21 @@ app.use(express.static(path.join(__dirname, "public")));
 app.use(express.json());
 
 // ============ STATE ============
+//
+// State shape:
+//   bibs:    { "12": "Alice Smith" }
+//   races:   { r100: { heats: { "1": Heat, "2": Heat, ... } }, r400: { ... } }
+//   longJump: { "12": [ {feet, inches, totalInches} ] }
+//
+// Heat: { num, lineup: [bib...], startTime: ms|null, results: [{bib, ms}] }
+//
 let state = {
-  bibs: {},                     // { "12": "Alice Smith" }
+  bibs: {},
   races: {
-    r100: { lineup: [], startTime: null, results: [] },
-    r400: { lineup: [], startTime: null, results: [] }
+    r100: { heats: {} },
+    r400: { heats: {} }
   },
-  longJump: {}                  // { "12": [ {feet, inches, totalInches} ] }
+  longJump: {}
 };
 
 function loadState() {
@@ -29,16 +37,25 @@ function loadState() {
     if (fs.existsSync(DATA_FILE)) {
       const raw = fs.readFileSync(DATA_FILE, "utf8");
       state = JSON.parse(raw);
-      // Ensure shape
-      state.bibs = state.bibs || {};
-      state.races = state.races || {};
-      state.races.r100 = state.races.r100 || { lineup: [], startTime: null, results: [] };
-      state.races.r400 = state.races.r400 || { lineup: [], startTime: null, results: [] };
-      state.longJump = state.longJump || {};
     }
   } catch (e) {
     console.error("Failed to load state:", e);
   }
+  // Normalize shape and migrate from old single-lineup format
+  state.bibs = state.bibs || {};
+  state.races = state.races || {};
+  state.longJump = state.longJump || {};
+  ["r100", "r400"].forEach(k => {
+    const r = state.races[k] || (state.races[k] = {});
+    if (!r.heats) {
+      // Old shape: race had lineup/startTime/results directly. Wrap into Heat #1.
+      const hasOld = r.lineup || r.results || r.startTime;
+      r.heats = hasOld
+        ? { "1": { num: 1, lineup: r.lineup || [], startTime: r.startTime || null, results: r.results || [] } }
+        : {};
+      delete r.lineup; delete r.startTime; delete r.results;
+    }
+  });
 }
 
 let saveTimer = null;
@@ -58,10 +75,16 @@ function broadcast() {
 
 loadState();
 
+function nextHeatNum(race) {
+  const nums = Object.keys(state.races[race].heats).map(Number);
+  return (nums.length ? Math.max(...nums) : 0) + 1;
+}
+
 // ============ SOCKETS ============
 io.on("connection", socket => {
   socket.emit("state", { state, serverNow: Date.now() });
 
+  // ----- Bibs -----
   socket.on("bib:set", ({ num, name }) => {
     num = String(num).trim();
     name = String(name || "").trim();
@@ -74,63 +97,79 @@ io.on("connection", socket => {
     num = String(num);
     delete state.bibs[num];
     ["r100", "r400"].forEach(k => {
-      state.races[k].lineup = state.races[k].lineup.filter(b => b !== num);
-      state.races[k].results = state.races[k].results.filter(r => r.bib !== num);
+      Object.values(state.races[k].heats).forEach(h => {
+        h.lineup = h.lineup.filter(b => b !== num);
+        h.results = h.results.filter(r => r.bib !== num);
+      });
     });
     delete state.longJump[num];
     save(); broadcast();
   });
 
-  socket.on("race:lineup:add", ({ race, bib }) => {
+  // ----- Heats -----
+  socket.on("heat:add", ({ race }) => {
     if (!state.races[race]) return;
+    const num = nextHeatNum(race);
+    state.races[race].heats[String(num)] = { num, lineup: [], startTime: null, results: [] };
+    save(); broadcast();
+  });
+
+  socket.on("heat:delete", ({ race, heat }) => {
+    if (!state.races[race]) return;
+    delete state.races[race].heats[String(heat)];
+    save(); broadcast();
+  });
+
+  socket.on("heat:checkin", ({ race, heat, bib }) => {
+    if (!state.races[race]) return;
+    const h = state.races[race].heats[String(heat)];
+    if (!h) return;
+    if (h.startTime) return; // can't change lineup once running
     bib = String(bib).trim();
     if (!bib) return;
-    if (!state.races[race].lineup.includes(bib)) {
-      state.races[race].lineup.push(bib);
-      save(); broadcast();
-    }
+    if (!h.lineup.includes(bib)) h.lineup.push(bib);
+    save(); broadcast();
   });
 
-  socket.on("race:lineup:remove", ({ race, bib }) => {
+  socket.on("heat:checkin:remove", ({ race, heat, bib }) => {
     if (!state.races[race]) return;
+    const h = state.races[race].heats[String(heat)];
+    if (!h) return;
+    if (h.startTime) return;
     bib = String(bib);
-    state.races[race].lineup = state.races[race].lineup.filter(b => b !== bib);
+    h.lineup = h.lineup.filter(b => b !== bib);
     save(); broadcast();
   });
 
-  socket.on("race:start", ({ race }) => {
+  socket.on("heat:start", ({ race, heat }) => {
     if (!state.races[race]) return;
-    state.races[race].startTime = Date.now();
-    state.races[race].results = [];
+    const h = state.races[race].heats[String(heat)];
+    if (!h || h.startTime || h.lineup.length === 0) return;
+    h.startTime = Date.now();
+    h.results = [];
     save(); broadcast();
   });
 
-  socket.on("race:finish", ({ race, bib, clientTime }) => {
+  socket.on("heat:stop", ({ race, heat }) => {
     if (!state.races[race]) return;
-    const r = state.races[race];
-    if (!r.startTime) return;
+    const h = state.races[race].heats[String(heat)];
+    if (!h) return;
+    h.startTime = null;
+    save(); broadcast();
+  });
+
+  socket.on("heat:finish", ({ race, heat, bib }) => {
+    if (!state.races[race]) return;
+    const h = state.races[race].heats[String(heat)];
+    if (!h || !h.startTime) return;
     bib = String(bib);
-    if (!r.lineup.includes(bib)) return;
-    if (r.results.find(x => x.bib === bib)) return;
-    // Use server time for authoritative finish recording.
-    const ms = Date.now() - r.startTime;
-    r.results.push({ bib, ms });
+    if (!h.lineup.includes(bib)) return;
+    if (h.results.find(r => r.bib === bib)) return;
+    h.results.push({ bib, ms: Date.now() - h.startTime });
     save(); broadcast();
   });
 
-  socket.on("race:stop", ({ race }) => {
-    if (!state.races[race]) return;
-    state.races[race].startTime = null;
-    save(); broadcast();
-  });
-
-  socket.on("race:clear", ({ race }) => {
-    if (!state.races[race]) return;
-    state.races[race].startTime = null;
-    state.races[race].results = [];
-    save(); broadcast();
-  });
-
+  // ----- Long Jump -----
   socket.on("lj:record", ({ bib, feet, inches }) => {
     bib = String(bib).trim();
     feet = Number(feet) || 0;
@@ -155,10 +194,7 @@ io.on("connection", socket => {
   socket.on("reset:all", () => {
     state = {
       bibs: {},
-      races: {
-        r100: { lineup: [], startTime: null, results: [] },
-        r400: { lineup: [], startTime: null, results: [] }
-      },
+      races: { r100: { heats: {} }, r400: { heats: {} } },
       longJump: {}
     };
     save(); broadcast();
@@ -179,17 +215,28 @@ function esc(s) {
   return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
+function bestByBib(race) {
+  // Across all heats, take each bib's fastest time.
+  const best = new Map();
+  Object.values(state.races[race].heats).forEach(h => {
+    h.results.forEach(r => {
+      const prev = best.get(r.bib);
+      if (!prev || r.ms < prev.ms) best.set(r.bib, { bib: r.bib, ms: r.ms, heat: h.num });
+    });
+  });
+  return [...best.values()].sort((a, b) => a.ms - b.ms);
+}
+
 function buildResultsHtml() {
   const date = new Date().toLocaleString();
 
-  function raceTable(key, title) {
-    const sorted = [...state.races[key].results].sort((a, b) => a.ms - b.ms);
+  function raceSection(key, title) {
+    const sorted = bestByBib(key);
     if (sorted.length === 0) return `<h2>${title}</h2><p class="empty">No results.</p>`;
-    let html = `<h2>${title}</h2><table><thead><tr><th>Place</th><th>Bib</th><th>Name</th><th>Time</th></tr></thead><tbody>`;
+    let html = `<h2>${title}</h2><table><thead><tr><th>Place</th><th>Bib</th><th>Name</th><th>Best Time</th><th>Heat</th></tr></thead><tbody>`;
     sorted.forEach((r, i) => {
-      const place = i + 1;
       const cls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
-      html += `<tr><td class="place ${cls}">${place}</td><td>${esc(r.bib)}</td><td>${esc(state.bibs[r.bib] || "")}</td><td class="time">${formatMs(r.ms)}</td></tr>`;
+      html += `<tr><td class="place ${cls}">${i + 1}</td><td>${esc(r.bib)}</td><td>${esc(state.bibs[r.bib] || "")}</td><td class="time">${formatMs(r.ms)}</td><td>${r.heat}</td></tr>`;
     });
     html += `</tbody></table>`;
     return html;
@@ -233,8 +280,8 @@ function buildResultsHtml() {
 </style></head><body>
 <h1>QuickTiming — Meet Results</h1>
 <p class="meta">Generated ${esc(date)}</p>
-${raceTable("r100", "100 Meter Dash")}
-${raceTable("r400", "400 Meter Dash")}
+${raceSection("r100", "100 Meter Dash")}
+${raceSection("r400", "400 Meter Dash")}
 ${ljHtml}
 </body></html>`;
 }
@@ -252,5 +299,4 @@ app.get("/export/download", (req, res) => {
 
 server.listen(PORT, () => {
   console.log(`QuickTiming server running at http://localhost:${PORT}`);
-  console.log(`Local network: open the same URL on phones using this machine's LAN IP.`);
 });

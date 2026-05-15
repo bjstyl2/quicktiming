@@ -64,6 +64,7 @@
   .view { display: none; }
   .view.active { display: block; }
   h2 { margin-top: 0; }
+  h3 { margin-top: 0; }
   .card {
     background: white;
     border-radius: 8px;
@@ -71,6 +72,10 @@
     margin-bottom: 12px;
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   }
+  .heat-card { border-left: 4px solid #6b7280; }
+  .heat-card.ready { border-left-color: #3b82f6; }
+  .heat-card.running { border-left-color: #10b981; background: #f0fdf4; }
+  .heat-card.done { border-left-color: #6b7280; background: #fafafa; }
   input, select, button {
     font-size: 16px;
     padding: 10px 12px;
@@ -94,17 +99,17 @@
   th { background: #f9fafb; font-weight: 600; font-size: 14px; }
   .form-row { display: flex; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
   .form-row > * { flex: 1; min-width: 100px; }
-  .form-row .btn-primary { flex: 0 0 auto; min-width: 110px; }
+  .form-row .btn-primary, .form-row .btn-secondary, .form-row .btn-danger { flex: 0 0 auto; min-width: 90px; }
   .timer-display {
-    font-size: 84px;
+    font-size: 72px;
     font-family: "Courier New", monospace;
     text-align: center;
     font-weight: bold;
     color: #111;
-    padding: 16px;
+    padding: 12px;
     background: #f9fafb;
     border-radius: 8px;
-    margin-bottom: 12px;
+    margin: 8px 0;
     line-height: 1;
   }
   .timer-display.running { color: #10b981; }
@@ -212,9 +217,28 @@
   }
   .row-spread { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
   .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
-  .btn-row button { flex: 1; min-width: 120px; }
+  .btn-row button, .btn-row a { flex: 1; min-width: 120px; }
+  .heat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .heat-title { font-size: 20px; font-weight: bold; margin: 0; }
+  .badge {
+    font-size: 12px;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+  .badge.ready { background: #dbeafe; color: #1e40af; }
+  .badge.running { background: #d1fae5; color: #065f46; }
+  .badge.done { background: #e5e7eb; color: #374151; }
   @media (max-width: 480px) {
-    .timer-display { font-size: 60px; }
+    .timer-display { font-size: 56px; }
     .bib-btn { padding: 18px 4px; font-size: 20px; }
   }
 </style>
@@ -271,9 +295,9 @@
         <input id="lj-bib" type="number" inputmode="numeric" placeholder="Bib #" min="1">
         <input id="lj-feet" type="number" inputmode="numeric" placeholder="Feet" min="0">
         <input id="lj-inches" type="number" inputmode="decimal" placeholder="Inches" min="0" max="11.99" step="0.25">
-        <button class="btn-primary" onclick="recordJump()">Record Jump</button>
+        <button class="btn-primary" onclick="recordJump()">Record</button>
       </div>
-      <p class="small">Type the bib number, feet, and inches, then record. The bib doesn't need a name assigned yet.</p>
+      <p class="small">Same jumper jumps again? After recording, the bib stays — just type new feet/inches and Record.</p>
     </div>
     <div class="card">
       <h3>Jumpers</h3>
@@ -288,7 +312,7 @@
         <a href="/export.html" target="_blank" class="btn-primary" style="text-decoration:none; text-align:center; padding:10px 12px; border-radius:6px">View Results Page</a>
         <a href="/export/download" class="btn-secondary" style="text-decoration:none; text-align:center; padding:10px 12px; border-radius:6px; color:#111">Download HTML</a>
       </div>
-      <p class="small" style="margin-top:8px">Open or share the results page link — it always reflects the latest data.</p>
+      <p class="small" style="margin-top:8px">Each athlete's best time across all heats is used for ranking.</p>
     </div>
     <div class="card"><h3>100 Meter Dash</h3><div id="results-100"></div></div>
     <div class="card"><h3>400 Meter Dash</h3><div id="results-400"></div></div>
@@ -305,13 +329,10 @@
 // =============== STATE ===============
 let state = {
   bibs: {},
-  races: {
-    r100: { lineup: [], startTime: null, results: [] },
-    r400: { lineup: [], startTime: null, results: [] }
-  },
+  races: { r100: { heats: {} }, r400: { heats: {} } },
   longJump: {}
 };
-let clockOffset = 0; // serverNow - clientNow at last broadcast
+let clockOffset = 0;
 
 const socket = io({ transports: ["websocket", "polling"] });
 
@@ -325,8 +346,10 @@ socket.on("disconnect", () => {
 });
 socket.on("state", ({ state: s, serverNow }) => {
   clockOffset = serverNow - Date.now();
+  const focusInfo = rememberFocus();
   state = s;
   renderAll();
+  restoreFocus(focusInfo);
   ensureTimerLoop();
 });
 
@@ -338,8 +361,46 @@ document.querySelectorAll("nav button").forEach(btn => {
     btn.classList.add("active");
     document.getElementById("view-" + btn.dataset.view).classList.add("active");
     renderAll();
+    focusForView(btn.dataset.view);
   });
 });
+
+// =============== FOCUS MANAGEMENT ===============
+function rememberFocus() {
+  const el = document.activeElement;
+  if (!el || el === document.body) return null;
+  return { id: el.id || null, selStart: el.selectionStart, selEnd: el.selectionEnd, value: el.value };
+}
+function restoreFocus(info) {
+  if (!info || !info.id) return;
+  const el = document.getElementById(info.id);
+  if (!el) return;
+  el.focus();
+  // Preserve cursor position if possible (text/number inputs)
+  try {
+    if (info.selStart != null && el.setSelectionRange) {
+      el.setSelectionRange(info.selStart, info.selEnd);
+    }
+  } catch (_) {}
+}
+function focusForView(view) {
+  if (view === "bibs") {
+    const el = document.getElementById("bib-number");
+    if (el) el.focus();
+  } else if (view === "lj") {
+    const el = document.getElementById("lj-bib");
+    if (el) el.focus();
+  } else if (view === "r100" || view === "r400") {
+    // Focus first not-yet-started heat's check-in input
+    const race = view;
+    const heats = Object.values(state.races[race].heats);
+    const ready = heats.find(h => !h.startTime);
+    if (ready) {
+      const el = document.getElementById(`checkin-${race}-${ready.num}`);
+      if (el) el.focus();
+    }
+  }
+}
 
 // =============== HELPERS ===============
 function escapeHtml(s) {
@@ -355,6 +416,10 @@ function formatMs(ms) {
 }
 function formatDist(j) { return `${j.feet}' ${j.inches}"`; }
 function serverTime() { return Date.now() + clockOffset; }
+function bibLabel(bib) {
+  const name = state.bibs[bib];
+  return name ? `${bib} — ${escapeHtml(name)}` : escapeHtml(bib);
+}
 
 // =============== BIBS ===============
 function addBib() {
@@ -388,119 +453,173 @@ function renderBibs() {
     </tr>`).join("");
 }
 
-// =============== RACES ===============
+// =============== RACES (HEATS) ===============
 function renderRace(key, containerId) {
   const race = state.races[key];
   const c = document.getElementById(containerId);
-  const isRunning = race.startTime !== null;
-  const finishedBibs = new Set(race.results.map(r => r.bib));
+  const heats = Object.values(race.heats).sort((a,b) => a.num - b.num);
 
-  let html = "";
+  let html = `<div class="card">
+    <div class="btn-row">
+      <button class="btn-primary" onclick="addHeat('${key}')">+ New Heat</button>
+    </div>
+    <p class="small" style="margin-top:8px">Each heat is its own race with its own line-up, timer, and results. Results from previous heats are never cleared.</p>
+  </div>`;
 
-  // Lineup / start panel
-  if (!isRunning) {
-    html += `<div class="card">
-      <h3>Starting Line-Up</h3>
-      <div class="form-row">
-        <input id="${key}-bib-input" type="number" inputmode="numeric" placeholder="Bib #" min="1"
-               onkeydown="if(event.key==='Enter') addToLineup('${key}')">
-        <button class="btn-primary" onclick="addToLineup('${key}')">Add</button>
-      </div>
-      <div class="lineup-list">`;
-    if (race.lineup.length === 0) {
-      html += `<span class="small">No athletes added yet.</span>`;
-    } else {
-      race.lineup.forEach(bib => {
-        const name = state.bibs[bib];
-        const label = name ? `${bib} — ${escapeHtml(name)}` : bib;
-        html += `<span class="lineup-tag">${label} <button onclick="removeFromLineup('${key}','${bib}')">×</button></span>`;
-      });
-    }
-    html += `</div>
-      <div class="btn-row">
-        <button class="btn-primary" onclick="startRace('${key}')" ${race.lineup.length === 0 ? "disabled" : ""}>Start Race</button>
-        ${race.results.length > 0 ? `<button class="btn-secondary" onclick="clearRace('${key}')">Clear Results</button>` : ""}
-      </div>
-    </div>`;
+  if (heats.length === 0) {
+    html += `<div class="card"><p class="empty">No heats yet. Click "+ New Heat" to begin.</p></div>`;
+  } else {
+    heats.forEach(h => { html += renderHeat(key, h); });
   }
 
-  // Timer + finish line
-  if (isRunning || race.results.length > 0) {
-    html += `<div class="card">
-      <div class="timer-display ${isRunning ? "running" : ""}" id="${key}-timer">${isRunning ? "0.00" : "—"}</div>`;
-
-    if (isRunning) {
-      html += `<div class="btn-row">
-        <button class="btn-danger" onclick="stopRace('${key}')">Stop Timer</button>
-      </div>
-      <h3 style="margin-top:18px">Tap bib at finish</h3>
-      <div class="bib-grid">`;
-      race.lineup.forEach(bib => {
-        const name = state.bibs[bib] || "";
-        if (finishedBibs.has(bib)) {
-          const result = race.results.find(r => r.bib === bib);
-          html += `<button class="bib-btn finished" disabled>
-            ${bib}<span class="name">${escapeHtml(name)}</span>
-            <span class="time">${formatMs(result.ms)}</span>
-          </button>`;
-        } else {
-          html += `<button class="bib-btn" onclick="recordFinish('${key}','${bib}')">
-            ${bib}<span class="name">${escapeHtml(name)}</span>
-          </button>`;
-        }
-      });
-      html += `</div>`;
-    }
-
-    if (race.results.length > 0) {
-      html += `<h3 style="margin-top:18px">Results</h3>`;
-      const sorted = [...race.results].sort((a,b) => a.ms - b.ms);
-      sorted.forEach((r, i) => {
-        const cls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
-        html += `<div class="results-row">
-          <span class="place ${cls}">${i+1}</span>
-          <strong>${r.bib}</strong>
-          <span style="flex:1">${escapeHtml(state.bibs[r.bib] || "")}</span>
-          <span style="font-family:monospace; font-weight:bold">${formatMs(r.ms)}</span>
-        </div>`;
-      });
-    }
-    html += `</div>`;
+  // Combined results
+  const combined = bestByBib(race);
+  html += `<div class="card"><h3>Combined Results — Best Times</h3>`;
+  if (combined.length === 0) {
+    html += `<p class="empty">No finishes recorded yet.</p>`;
+  } else {
+    combined.forEach((r, i) => {
+      const cls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
+      html += `<div class="results-row">
+        <span class="place ${cls}">${i+1}</span>
+        <strong>${r.bib}</strong>
+        <span style="flex:1">${escapeHtml(state.bibs[r.bib] || "")}</span>
+        <span class="small">Heat ${r.heat}</span>
+        <span style="font-family:monospace; font-weight:bold">${formatMs(r.ms)}</span>
+      </div>`;
+    });
   }
+  html += `</div>`;
 
   c.innerHTML = html;
 }
 
-function addToLineup(key) {
-  const input = document.getElementById(`${key}-bib-input`);
+function renderHeat(key, h) {
+  const isRunning = h.startTime !== null;
+  const hasResults = h.results.length > 0;
+  const status = isRunning ? "running" : (hasResults ? "done" : "ready");
+  const statusLabel = isRunning ? "Running" : (hasResults ? "Done" : "Ready");
+  const finishedBibs = new Set(h.results.map(r => r.bib));
+
+  let html = `<div class="card heat-card ${status}">
+    <div class="heat-header">
+      <h3 class="heat-title">Race ${h.num}</h3>
+      <span class="badge ${status}">${statusLabel}</span>
+    </div>`;
+
+  // Check-in section (only when not running and no results yet) — but always show lineup
+  if (!isRunning) {
+    html += `<div class="form-row">
+      <input id="checkin-${key}-${h.num}" type="number" inputmode="numeric" placeholder="Bib # to check in" min="1"
+             onkeydown="if(event.key==='Enter') checkin('${key}', ${h.num})">
+      <button class="btn-primary" onclick="checkin('${key}', ${h.num})">Add</button>
+    </div>`;
+  }
+
+  // Lineup tags
+  html += `<div class="lineup-list">`;
+  if (h.lineup.length === 0) {
+    html += `<span class="small">No athletes checked in.</span>`;
+  } else {
+    h.lineup.forEach(bib => {
+      const close = isRunning ? "" : `<button onclick="checkinRemove('${key}', ${h.num}, '${bib}')">×</button>`;
+      html += `<span class="lineup-tag">${bibLabel(bib)} ${close}</span>`;
+    });
+  }
+  html += `</div>`;
+
+  // Start / timer / finish buttons
+  if (!isRunning) {
+    html += `<div class="btn-row">
+      <button class="btn-primary" onclick="startHeat('${key}', ${h.num})" ${h.lineup.length === 0 ? "disabled" : ""}>Start Race</button>
+      <button class="btn-secondary" onclick="deleteHeat('${key}', ${h.num})">Delete Heat</button>
+    </div>`;
+  } else {
+    html += `<div class="timer-display running" id="timer-${key}-${h.num}">0.00</div>
+    <div class="btn-row">
+      <button class="btn-danger" onclick="stopHeat('${key}', ${h.num})">Stop Timer</button>
+    </div>
+    <h4 style="margin:14px 0 6px 0">Tap bib at finish</h4>
+    <div class="bib-grid">`;
+    h.lineup.forEach(bib => {
+      const name = state.bibs[bib] || "";
+      if (finishedBibs.has(bib)) {
+        const result = h.results.find(r => r.bib === bib);
+        html += `<button class="bib-btn finished" disabled>
+          ${bib}<span class="name">${escapeHtml(name)}</span>
+          <span class="time">${formatMs(result.ms)}</span>
+        </button>`;
+      } else {
+        html += `<button class="bib-btn" onclick="finishHeat('${key}', ${h.num}, '${bib}')">
+          ${bib}<span class="name">${escapeHtml(name)}</span>
+        </button>`;
+      }
+    });
+    html += `</div>`;
+  }
+
+  // Heat results
+  if (hasResults) {
+    html += `<h4 style="margin:14px 0 6px 0">Heat ${h.num} Results</h4>`;
+    const sorted = [...h.results].sort((a,b) => a.ms - b.ms);
+    sorted.forEach((r, i) => {
+      const cls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
+      html += `<div class="results-row">
+        <span class="place ${cls}">${i+1}</span>
+        <strong>${r.bib}</strong>
+        <span style="flex:1">${escapeHtml(state.bibs[r.bib] || "")}</span>
+        <span style="font-family:monospace; font-weight:bold">${formatMs(r.ms)}</span>
+      </div>`;
+    });
+  }
+
+  html += `</div>`;
+  return html;
+}
+
+function bestByBib(race) {
+  const best = new Map();
+  Object.values(race.heats).forEach(h => {
+    h.results.forEach(r => {
+      const prev = best.get(r.bib);
+      if (!prev || r.ms < prev.ms) best.set(r.bib, { bib: r.bib, ms: r.ms, heat: h.num });
+    });
+  });
+  return [...best.values()].sort((a, b) => a.ms - b.ms);
+}
+
+function addHeat(key) { socket.emit("heat:add", { race: key }); }
+function deleteHeat(key, heat) {
+  if (!confirm(`Delete Race ${heat}? Its results will be removed.`)) return;
+  socket.emit("heat:delete", { race: key, heat });
+}
+function checkin(key, heat) {
+  const input = document.getElementById(`checkin-${key}-${heat}`);
+  if (!input) return;
   const bib = input.value.trim();
   if (!bib) return;
-  socket.emit("race:lineup:add", { race: key, bib });
+  socket.emit("heat:checkin", { race: key, heat, bib });
   input.value = "";
   input.focus();
 }
-function removeFromLineup(key, bib) {
-  socket.emit("race:lineup:remove", { race: key, bib });
+function checkinRemove(key, heat, bib) {
+  socket.emit("heat:checkin:remove", { race: key, heat, bib });
 }
-function startRace(key) {
-  socket.emit("race:start", { race: key });
+function startHeat(key, heat) { socket.emit("heat:start", { race: key, heat }); }
+function stopHeat(key, heat) {
+  if (!confirm("Stop the timer? Finishes already recorded are kept.")) return;
+  socket.emit("heat:stop", { race: key, heat });
 }
-function stopRace(key) {
-  if (!confirm("Stop the timer? Recorded finishes are kept.")) return;
-  socket.emit("race:stop", { race: key });
-}
-function clearRace(key) {
-  if (!confirm("Clear all results for this race?")) return;
-  socket.emit("race:clear", { race: key });
-}
-function recordFinish(key, bib) {
-  socket.emit("race:finish", { race: key, bib, clientTime: Date.now() });
+function finishHeat(key, heat, bib) {
+  socket.emit("heat:finish", { race: key, heat, bib });
 }
 
 // =============== TIMER LOOP ===============
 let timerInterval = null;
 function ensureTimerLoop() {
-  const anyRunning = Object.values(state.races).some(r => r.startTime !== null);
+  const anyRunning = ["r100","r400"].some(k =>
+    Object.values(state.races[k].heats).some(h => h.startTime !== null)
+  );
   if (anyRunning && !timerInterval) {
     timerInterval = setInterval(updateTimers, 50);
   } else if (!anyRunning && timerInterval) {
@@ -510,12 +629,13 @@ function ensureTimerLoop() {
 }
 function updateTimers() {
   const now = serverTime();
-  ["r100","r400"].forEach(key => {
-    const race = state.races[key];
-    const el = document.getElementById(`${key}-timer`);
-    if (el && race.startTime) {
-      el.textContent = formatMs(now - race.startTime);
-    }
+  ["r100","r400"].forEach(k => {
+    Object.values(state.races[k].heats).forEach(h => {
+      if (h.startTime) {
+        const el = document.getElementById(`timer-${k}-${h.num}`);
+        if (el) el.textContent = formatMs(now - h.startTime);
+      }
+    });
   });
 }
 
@@ -527,14 +647,14 @@ function recordJump() {
   const bib = bibEl.value.trim();
   const feet = parseFloat(feetEl.value) || 0;
   const inches = parseFloat(inchesEl.value) || 0;
-  if (!bib) { alert("Enter a bib number."); return; }
-  if (feet === 0 && inches === 0) { alert("Enter a jump distance."); return; }
+  if (!bib) { alert("Enter a bib number."); bibEl.focus(); return; }
+  if (feet === 0 && inches === 0) { alert("Enter a jump distance."); feetEl.focus(); return; }
   if (inches >= 12) { alert("Inches must be less than 12."); return; }
   socket.emit("lj:record", { bib, feet, inches });
+  // Keep bib in place for fast successive jumps; clear distance and refocus feet
   feetEl.value = "";
   inchesEl.value = "";
-  bibEl.focus();
-  bibEl.select();
+  feetEl.focus();
 }
 function removeJump(bib, idx) {
   if (!confirm("Remove this jump?")) return;
@@ -576,7 +696,7 @@ function renderLongJump() {
 function renderResults() {
   ["r100","r400"].forEach(key => {
     const el = document.getElementById(key === "r100" ? "results-100" : "results-400");
-    const sorted = [...state.races[key].results].sort((a,b) => a.ms - b.ms);
+    const sorted = bestByBib(state.races[key]);
     if (sorted.length === 0) { el.innerHTML = `<p class="empty">No results yet.</p>`; return; }
     el.innerHTML = sorted.map((r, i) => {
       const cls = i === 0 ? "gold" : i === 1 ? "silver" : i === 2 ? "bronze" : "";
@@ -584,6 +704,7 @@ function renderResults() {
         <span class="place ${cls}">${i+1}</span>
         <strong>${r.bib}</strong>
         <span style="flex:1">${escapeHtml(state.bibs[r.bib] || "")}</span>
+        <span class="small">Heat ${r.heat}</span>
         <span style="font-family:monospace; font-weight:bold">${formatMs(r.ms)}</span>
       </div>`;
     }).join("");
@@ -610,7 +731,7 @@ function renderResults() {
 }
 
 function resetAll() {
-  if (!confirm("This will erase ALL bibs and results across all phones. Are you sure?")) return;
+  if (!confirm("This will erase ALL bibs, heats, and results across all phones. Are you sure?")) return;
   if (!confirm("Really sure? This cannot be undone.")) return;
   socket.emit("reset:all");
 }
@@ -630,8 +751,19 @@ document.getElementById("bib-name").addEventListener("keydown", e => {
 document.getElementById("bib-number").addEventListener("keydown", e => {
   if (e.key === "Enter") document.getElementById("bib-name").focus();
 });
+document.getElementById("lj-bib").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("lj-feet").focus();
+});
+document.getElementById("lj-feet").addEventListener("keydown", e => {
+  if (e.key === "Enter") document.getElementById("lj-inches").focus();
+});
+document.getElementById("lj-inches").addEventListener("keydown", e => {
+  if (e.key === "Enter") recordJump();
+});
 
 renderAll();
+// Focus default input on load (Bibs view is active)
+setTimeout(() => focusForView("bibs"), 50);
 </script>
 </body>
 </html>
